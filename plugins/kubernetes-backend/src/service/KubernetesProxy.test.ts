@@ -1000,6 +1000,66 @@ describe('KubernetesProxy', () => {
       webSocket.close();
       await closePromise;
     });
+
+    it('should proxy websocket connections in a multi-cluster setup after upgrade', async () => {
+      clusterSupplier.getClusters.mockResolvedValue([
+        {
+          name: 'local',
+          url: `http://localhost:${wsPort}`,
+          authMetadata: {},
+        },
+        {
+          name: 'remote',
+          url: 'https://localhost:19999',
+          authMetadata: {},
+        },
+      ]);
+
+      const proxyHttpAddress = `http://127.0.0.1:${proxyPort}${proxyPath}`;
+      const wsProxyAddress = `ws://127.0.0.1:${proxyPort}${proxyPath}${wsPath}`;
+      const wsAddress = `ws://localhost:${wsPort}${wsPath}`;
+
+      // Let this request through so it reaches the express router above
+      worker.use(
+        rest.all(wsAddress.replace('ws', 'http'), (req: any) =>
+          req.passthrough(),
+        ),
+        rest.all(wsProxyAddress.replace('ws', 'http'), (req: any) =>
+          req.passthrough(),
+        ),
+        rest.all(`${proxyHttpAddress}/*`, (req: any) => req.passthrough()),
+        rest.get(
+          `http://localhost:${wsPort}/api`,
+          (_: any, res: any, ctx: any) =>
+            res(ctx.status(200), ctx.json({ ok: true })),
+        ),
+      );
+
+      const httpResponse = await request(`http://127.0.0.1:${proxyPort}`)
+        .get(`${proxyPath}/api`)
+        .set(HEADER_KUBERNETES_CLUSTER, 'local');
+
+      expect(httpResponse.status).toEqual(200);
+
+      const webSocket = new WebSocket(wsProxyAddress);
+
+      const connectMessagePromise = eventPromiseFactory(webSocket, 'message');
+
+      await eventPromiseFactory(webSocket, 'open');
+
+      const connectMessage = await connectMessagePromise;
+      expect(connectMessage).toBe('connected');
+
+      const echoMessagePromise = eventPromiseFactory(webSocket, 'message');
+      webSocket.send('multi-cluster echo');
+
+      const echoMessage = await echoMessagePromise;
+      expect(echoMessage).toBe('multi-cluster echo');
+
+      const closePromise = eventPromiseFactory(webSocket, 'close');
+      webSocket.close();
+      await closePromise;
+    });
   });
 
   describe('Backstage running on k8s', () => {

@@ -156,19 +156,15 @@ export class KubernetesProxy {
         ws: true,
         secure: !originalCluster.skipTLSVerify,
         changeOrigin: true,
-        pathRewrite: async (path, req) => {
-          // Re-evaluate the cluster on each request, in case it has changed
-          const cluster = await this.getClusterForRequest(req);
-          const url = new URL(cluster.url);
+        pathRewrite: async (path, _req) => {
+          const url = new URL(originalCluster.url);
           return path.replace(
             new RegExp(`^${originalReq.baseUrl}`),
             url.pathname || '',
           );
         },
         router: async req => {
-          // Re-evaluate the cluster on each request, in case it has changed
-          const cluster = await this.getClusterForRequest(req);
-          const url = new URL(cluster.url);
+          const url = new URL(originalCluster.url);
 
           const { bufferFromFileOrString } = await import(
             '@kubernetes/client-node'
@@ -179,8 +175,8 @@ export class KubernetesProxy {
             host: url.hostname,
             port: url.port,
             ca: bufferFromFileOrString(
-              cluster.caFile,
-              cluster.caData,
+              originalCluster.caFile,
+              originalCluster.caData,
             )?.toString(),
           };
 
@@ -194,9 +190,10 @@ export class KubernetesProxy {
               req.headers,
             );
 
-            const credential = await this.getClusterForRequest(req).then(cd => {
-              return this.authStrategy.getCredential(cd, authObj);
-            });
+            const credential = await this.authStrategy.getCredential(
+              originalCluster,
+              authObj,
+            );
 
             if (credential.type === 'bearer token') {
               req.headers.authorization = `Bearer ${credential.token}`;
